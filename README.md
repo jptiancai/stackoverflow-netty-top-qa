@@ -71,12 +71,119 @@ N和J 字母的不同，先开个玩笑:)
 
 - [在Play框架上执行SSL](http://stackoverflow.com/questions/7099361/enforce-ssl-on-play-framework)
 
+有很多种方式可以执行SSL
+
+第一种，你可以使用`secure()`方法来设置你所有的actions，例如
+
+```
+<a href="@{Application.index.secure()}">index page</a>
+```
+
+另一种方式，可能也是最好的，可以通过一个前端HTTP服务器，类似于Apache，Nginx或者[Lighttpd](http://www.lighttpd.net/).
+
+前端http服务器的主要用处是你的应用可以通过9000端口访问，但是外网不可以访问。HTTP响应所有到来的请求，可以配置为仅接受HTTPS。
+HTTPS 通过HTTP服务器处理，请求会转发给Play。
+
+这样一来，会让整个Play框架运行良好，SSL是另一个应用程序卸载。
+
+相同的方法可以应用于负载均衡上，而不是HTTP服务器，但我猜大部分人会使用更便宜的解决方法，比如使用HTTP服务器，除非它运行在一个合适的环境上。
+
+
+- [Netty 如何使用线程池？](http://stackoverflow.com/questions/5474372/how-netty-uses-thread-pools)
+
+以下来自于NioServerSocketChannelFactory  文档
+
+`
+NioServerSocketChannelFactory 创建一个基于NIO ServerSocketChannel的服务器端。
+利用非阻塞I/O模式，引入NIO来高校服务很多同步链接。
+
+线程如何工作
+在一个NioServerSocketChannelFactory中有两种类型的线程；一种是boss线程，另一种是worker线程。
+
+Boss 线程
+每个绑定ServerSocketChannel 都会有自己的boss线程。比如，如果你打开两个服务端口，比如80和443，那么你会有两个boss线程。
+一个boss线程接受到来的连接，直到该端口解绑。一旦成功接受一个线程，boss线程该Channel 给worker线程中的一个，而worker 线程是
+NioServerSocketChannelFactory 管理的。
+
+Worker 线程
+一个NioServerSocketChannelFactory 可以有一个或多个worker线程。一个worker线程在非阻塞模式中，可以为一个或多个Channel
+执行非阻塞线程的读和写。
+
+`
+
+在Nio模式中，boss线程关心全部绑定socket（监听socket）接口，worker线程关心Accepted-socket（包括IO和调用事件方法，比如messageReceived方法）
 
 
 
+- [java中，哪一个NIO类库（Netty,Grizzly,keyonet,...）可以简单的后端实现](http://stackoverflow.com/questions/8269093/which-nio-library-netty-grizzly-kryonet-for-simple-backend-server-imple)
+
+
+尝试翻译下这个文档，它回答了你的问题。[http://blog.xebia.fr/2011/11/09/java-nio-et-framework-web-haute-performance/](http://blog.xebia.fr/2011/11/09/java-nio-et-framework-web-haute-performance/)
+
+如今，在一次法国背景，由VmWare（USI2011）举办的挑战赛，法国著名Java EE专家组，做了很多 NIO服务器[poc](http://wenku.baidu.com/link?url=Va9ibulwJdINVAIgzMRT6seE-Ap2_6zmSHMBfBNauZfNltKzxREUkZEg3TrFBftKgSbPDwxjDIZF3pI4C_WMzZ2ic5tclC5sf_SznrfcbEy)。它是构建一个简单的问答程序，
+它可以承载处理一百万连接用户。
+
+他们凭借伟大的结果赢得了挑战。他们的实现是Netty+Gemfire ，而且他们仅仅是用MemoryAwareThreadPool 替代了CachedThreadPool 
+
+Netty看起来提供了很好地性能，和友好的文档。
+
+他们也考虑过Deft，灵感来源于Tornado（python/facebook），但目前仍然有些不稳定。
+
+**追加：** 这是上面回答中的[翻译链接](http://translate.google.com/translate?sl=auto&tl=en&js=n&prev=_t&hl=en&ie=UTF-8&u=http://blog.xebia.fr/2011/11/09/java-nio-et-framework-web-haute-performance/)
 
 
 
+- [使用Jetty还是Netty](http://stackoverflow.com/questions/8639625/use-jetty-or-netty)
+
+Jetty 从版本6开始([点击这里查看详情](http://wiki.eclipse.org/Jetty/Feature/Continuations))有很多支持异步请求处理，使用一个专有的API。
+更近的版本支持了部分Servlet3.0 API中的异步API，类似于其他兼容性的实现。
+
+除非你有很特殊的需求，否则使用Netty会看起来事倍功半，此外，Jetty将会用最小的努力来完成这项工作。
+
+
+- [工作在很多客户端连接情况下，Netty线程模式是如何工作的？](http://stackoverflow.com/questions/7895964/how-does-the-netty-threading-model-work-in-the-case-of-many-client-connections)
+
+这虽然不是你想要的答案，但是你可以使用相同的`NioClientSocketChannelFactory `来用多个`ChannelPipelineFactorys `创建单个`ClientBootstrap` ，
+这样依次增加n数量的连接。下面是示例代码：
+
+```
+public static void main(String[] args)
+{
+    String host = "localhost";
+    int port = 8090;
+    ChannelFactory factory = new NioClientSocketChannelFactory(Executors
+            .newCachedThreadPool(), Executors.newCachedThreadPool());
+    MyHandler handler1 = new MyHandler();
+    PipelineFactory factory1 = new PipelineFactory(handler1);
+    AnotherHandler handler2 = new AnotherHandler();
+    PipelineFactory factory2 = new PipelineFactory(handler2);
+    ClientBootstrap bootstrap = new ClientBootstrap(factory);
+    // At client side option is tcpNoDelay and at server child.tcpNoDelay
+    bootstrap.setOption("tcpNoDelay", true);
+    bootstrap.setOption("keepAlive", true);
+    for (int i = 1; i<=50;i++){
+        if(i%2==0){
+            bootstrap.setPipelineFactory(factory1);
+        }else{
+            bootstrap.setPipelineFactory(factory2);
+        }
+
+        ChannelFuture future = bootstrap.connect(new InetSocketAddress(host,
+                port));
+
+        future.addListener(new ChannelFutureListener()
+        {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception
+            {
+                future.getChannel().write("SUCCESS");
+            }
+        });
+    }
+}
+```
+
+这个代码同样展示了pipeline 工厂在设置为不同的连接时有什么不同之处。基于你创建的连接，促使你在channel pipeline中调整编码/解码。
 
 
 
