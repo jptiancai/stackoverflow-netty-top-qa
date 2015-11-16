@@ -185,6 +185,101 @@ public static void main(String[] args)
 
 这个代码同样展示了pipeline 工厂在设置为不同的连接时有什么不同之处。基于你创建的连接，促使你在channel pipeline中调整编码/解码。
 
+- [分析Netty性能](http://stackoverflow.com/questions/14613615/profiling-netty-performance)
+
+Netty默认创建Runtime.getRuntime().availableProcessors() * 2 个角色。在你的示例中有16个。
+这就意味着你可以同时处理16个channels，其他的channels会一直等待，直到你释放`ChannelUpstreamHandler.handleUpstream/SimpleChannelHandler.messageReceived`
+处理器，所以不需要再这样（I/O）线程中做很多操作，否则你会在其他channels卡住。
+
+- [对比基础的ServerSocket服务，Netty有什么好处？](http://stackoverflow.com/questions/8406914/benefits-of-netty-over-basic-serversocket-server)
+
+Netty对比简单的从socket对，其主要的好处是使用了流。
+Netty支持**非阻塞，异步I/O**（使用Java NIO API），当你使用流从sockets读写时（你会开启一个新的线程为每个从`ServerSocket`收到的连接）
+你正在使用阻塞，同步I/O。Netty把握的尺度更好一些，当你的系统需要有能力同一时间处理很多（上千个）线程是很重要的，可能不值得使用类似Netty这样的框架。
+
+一些背景信息：线程在一个操作系统中是相对昂贵的资源。每个线程都需要内存堆栈（类似占用2MB的大小空间）。当你创建上千个线程，会消耗很多内存；
+同样，操作系统会限制创造线程的数量。所以你不需要为每个到来的连接启动一个新线程。异步I/O的目的是为了从线程中解耦（不是一对一的关系）。
+这样会有更多的连接而不是线程创造的，而且无论何时事件发生在其中任何一个连接上面（比如，接收到数据的时候），一个线程从线程池中出来临时用于处理事件。
+
+---------------------------------
+
+- [如何写一个高性能的Netty客户端？](http://stackoverflow.com/questions/8444267/how-to-write-a-high-performance-netty-client)
+
+
+1)如果客户端只是发送，没有接受，你就可以关闭读channel，以下是代码示例
+
+```
+channel.setReadable(false);
+```
+
+2) 可以通过多个客户端channel很容易的增加吞吐量，同样可以扩展。
+
+3）以下的调整通常也可以提高性能（读或写）
+
+- 有创建一个类似pipline的分段式事件驱动架构，通过OrderdMemoryAwareThreadPoolExecutor增加一个EXecutionHandler (最小，最大的chanel内存是可选项)
+
+```
+bootstrap.setPipelineFactory(new ChannelPipelineFactory() {
+    @Override
+    public ChannelPipeline getPipeline() throws Exception {
+        return Channels.pipeline(
+                executionHandler1,//sharable
+                new MessageDecoderHandler(),
+                new MessageEncoderHandler(),
+                executionHandler2,//sharable
+                new BusinessLogicHandler1(),
+                new BusinessLogicHandler2());
+    }
+});
+```
+
+- 设置channel的writeBufferHighWaterMark 的值（确认设置比较大的值不会引起堵塞）
+
+
+```
+bootstrap.setOption("writeBufferHighWaterMark", 10 * 64 * 1024);
+```
+
+
+- 设置SO_READ, SO_WRITE的 缓存大小
+
+```
+bootstrap.setOption("sendBufferSize", 1048576);
+bootstrap.setOption("receiveBufferSize", 1048576);
+```
+
+- 开启TCP无延迟
+
+```
+bootstrap.setOption("tcpNoDelay", true);
+```
+------------------------------
+
+- [Netty相关文章和书籍](http://stackoverflow.com/questions/11357480/books-and-articles-on-netty)
+
+当你需要搜索的时候，谷歌是更好的选择！
+
+**追加：需翻墙**
+
+- [Netty Tutorial Part 1: Introduction to Netty](http://seeallhearall.blogspot.tw/2012/05/netty-tutorial-part-1-introduction-to.html?ref=dzone)
+- [Netty Tutorial Part 1.5: On Channel Handlers and Channel Options](http://seeallhearall.blogspot.com/2012/06/netty-tutorial-part-15-on-channel.html)
+
+
+----------------------------
+
+- [找出当前Java虚拟机有哪些已经打开的网络sockets](http://stackoverflow.com/questions/11669554/finding-out-what-network-sockets-are-open-in-the-current-java-vm)
+
+可以加个钩子在`java.net.Socket`和`java.net.ServerSocket`上，而且监视所有这些类的新实例。完整代码可以在[资源库](https://github.com/orfjackal/jumi/blob/ff51720444cc23d7bfc102ba07a6211cbe9b2f7a/end-to-end-tests/src/test/java/fi/jumi/test/ReleasingResourcesTest.java)里面找到。
+下面是该方法的概述：
+
+当一个Socket 或者ServerSocket被安装以后，第一件事情是在其构造函数里面调用`setImpl()`方法，它是真正实现socket功能的类。默认的实现是`java.net.SocksSocketImpl`的实例
+，但是它可以被自定义的`java.net.SocketImplFactory`覆盖
+
+
+
+
+
+
 
 
 
