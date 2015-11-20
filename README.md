@@ -273,7 +273,96 @@ bootstrap.setOption("tcpNoDelay", true);
 下面是该方法的概述：
 
 当一个Socket 或者ServerSocket被安装以后，第一件事情是在其构造函数里面调用`setImpl()`方法，它是真正实现socket功能的类。默认的实现是`java.net.SocksSocketImpl`的实例
-，但是它可以被自定义的`java.net.SocketImplFactory`覆盖
+，但是它可以被自定义的`[java.net.SocketImplFactory](http://docs.oracle.com/javase/7/docs/api/java/net/SocketImplFactory.html)`通过`[java.net.Socket#setSocketImplFactory](http://docs.oracle.com/javase/7/docs/api/java/net/Socket.html#setSocketImplFactory%28java.net.SocketImplFactory%29)`和
+`[java.net.ServerSocket#setSocketFactory.](http://docs.oracle.com/javase/7/docs/api/java/net/ServerSocket.html#setSocketFactory%28java.net.SocketImplFactory%29)`
+
+在私有包里面实现`[java.net.SocketImpl](http://docs.oracle.com/javase/7/docs/api/java/net/SocketImpl.html)`有一些复杂，可以用一点并不是很难的反射。
+
+```
+private static SocketImpl newSocketImpl() {
+    try {
+        Class<?> defaultSocketImpl = Class.forName("java.net.SocksSocketImpl");
+        Constructor<?> constructor = defaultSocketImpl.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        return (SocketImpl) constructor.newInstance();
+    } catch (Exception e) {
+        throw new RuntimeException(e);
+    }
+}
+
+```
+
+
+socketImpFactory的实现是监听所有的sockts，正如以下代码示例一样：
+
+```
+final List<SocketImpl> allSockets = Collections.synchronizedList(new ArrayList<SocketImpl>());
+ServerSocket.setSocketFactory(new SocketImplFactory() {
+	public SocketImpl createSocketImpl() {
+		SocketImpl socket = newSocketImpl();
+		allSockets.add(socket);
+		return socket;
+	}
+});
+```
+
+注意 setSocketFactory/setSocketImplFactory 方法只可以被调用一次，所以你需要测试其中一个（就像上面这样），否则你必须创建一个静态的
+单例(真令人烦恼啊！)来保持监听。
+
+接下来时就是找到socket是否被关闭？所有的Socket和ServeSocket都有一个方法`isClosed`，但它内部用了一个boolean来标识它是否关闭-SocketImpl实例
+没有一种简单的方法检查是否关闭。（顺便一提，所有的Socket和ServerSocket是SocketImpl的实现，而没有 "ServerSocketImpl".）
+
+幸好SocketImpl有一个支持Socket和ServerSocket的索引。上面提到的`setImpl()`方法调用`impl.setSocket(this)`或者`impl.setServerSocket(this)`，
+而且它是可能通过调用`java.net.SocketImpl#getSocket`或者`java.net.SocketImpl#getServerSocket`取得索引。
+
+又因为这些方法是包私有的额，所以需要一点点的反射：
+
+```
+private static Socket getSocket(SocketImpl impl) {
+    try {
+        Method getSocket = SocketImpl.class.getDeclaredMethod("getSocket");
+        getSocket.setAccessible(true);
+        return (Socket) getSocket.invoke(impl);
+    } catch (Exception e) {
+        throw new RuntimeException(e);
+    }
+}
+
+private static ServerSocket getServerSocket(SocketImpl impl) {
+    try {
+        Method getServerSocket = SocketImpl.class.getDeclaredMethod("getServerSocket");
+        getServerSocket.setAccessible(true);
+        return (ServerSocket) getServerSocket.invoke(impl);
+    } catch (Exception e) {
+        throw new RuntimeException(e);
+    }
+}
+```
+
+注意getSocket/getServerSocket方法可能不会在SocketImplFactory内部被调用，因为Socket/ServerSockets只是在SocketImpl返回之后才设置他们。
+
+
+现在所有用于我们测试必要的基础代码移已经准备好，无论是Socket还是ServerSocket：
+
+```
+    for (SocketImpl impl : allSockets) {
+        assertIsClosed(getSocket(impl));
+    }
+```
+
+所有的源代码在[这里](https://github.com/orfjackal/jumi/blob/ff51720444cc23d7bfc102ba07a6211cbe9b2f7a/end-to-end-tests/src/test/java/fi/jumi/test/ReleasingResourcesTest.java)
+
+----------------------
+
+
+- [Netty服务部署在Tomcat下是否可行/理想？](http://stackoverflow.com/questions/3194508/is-hosting-a-netty-server-inside-tomcat-feasible-desirable)
+
+
+
+
+
+
+
 
 
 
